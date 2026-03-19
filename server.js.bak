@@ -1,0 +1,94 @@
+const express = require('express');
+const admin = require('firebase-admin');
+const cors = require('cors');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// ✅ Inizializza Firebase Admin
+// Scaricherai la chiave nel passo successivo
+const serviceAccount = require('./serviceAccountKey.json');
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
+const db = admin.firestore();
+
+// ✅ Ascolta nuovi annunci
+db.collection('annunci').onSnapshot(async (snapshot) => {
+  for (const change of snapshot.docChanges()) {
+    if (change.type === 'added') {
+      const annuncio = change.doc.data();
+      
+      // Controlla se è nuovo (ultimi 10 secondi)
+      if (annuncio.timestamp) {
+        const createdAt = annuncio.timestamp.toDate();
+        const now = new Date();
+        const diff = (now - createdAt) / 1000;
+        
+        if (diff < 10) {
+          console.log('📢 Nuovo annuncio:', annuncio.titolo);
+          await sendNotificationToAll(annuncio);
+        }
+      }
+    }
+  }
+});
+
+// ✅ Invia notifica a tutti gli utenti
+async function sendNotificationToAll(annuncio) {
+  try {
+    const usersSnapshot = await db.collection('users')
+      .where('fcm_token', '!=', null)
+      .get();
+
+    const tokens = [];
+    usersSnapshot.forEach(doc => {
+      const token = doc.data().fcm_token;
+      if (token) tokens.push(token);
+    });
+
+    if (tokens.length === 0) {
+      console.log('⚠️ Nessun token trovato');
+      return;
+    }
+
+    console.log(`📱 Invio a ${tokens.length} dispositivi`);
+
+    const message = {
+      notification: {
+        title: `📢 Nuovo annuncio: ${annuncio.titolo}`,
+        body: annuncio.testo.substring(0, 100)
+      },
+      android: {
+        notification: {
+          channelId: 'annunci_channel',
+          priority: 'high',
+          sound: 'default'
+        }
+      },
+      tokens: tokens
+    };
+
+    const response = await admin.messaging().sendEachForMulticast(message);
+    console.log(`✅ Inviate: ${response.successCount}/${tokens.length}`);
+    
+    if (response.failureCount > 0) {
+      console.log(`❌ Errori: ${response.failureCount}`);
+    }
+  } catch (error) {
+    console.error('❌ Errore:', error);
+  }
+}
+
+// ✅ Health check
+app.get('/', (req, res) => {
+  res.json({ status: 'Server notifiche SanClemente attivo' });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server in ascolto su porta ${PORT}`);
+});
