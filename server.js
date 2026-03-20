@@ -6,8 +6,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Inizializza Firebase Admin
-const serviceAccount = require('./serviceAccountKey.json');
+// ✅ Inizializza Firebase Admin (usa ENV in produzione, file in locale)
+const serviceAccount = process.env.SERVICE_ACCOUNT 
+  ? JSON.parse(process.env.SERVICE_ACCOUNT)
+  : require('./serviceAccountKey.json');
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
